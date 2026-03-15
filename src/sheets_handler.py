@@ -6,15 +6,17 @@ Uses Google Sheets API v4.
 import logging
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
-from config import SPREADSHEET_ID, UNIVERSE_TAB, COLD_EMAIL_TAB
+from config import SPREADSHEET_ID, UNIVERSE_TAB, COLD_EMAIL_TAB, SHEETS_SERVICE_ACCOUNT
 
 logger = logging.getLogger(__name__)
 
 SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 
-def get_sheets_service(credentials_file: str = "credentials/sheets_service_account.json"):
+def get_sheets_service(credentials_file: str = None):
     """Initialize Google Sheets API service."""
+    if credentials_file is None:
+        credentials_file = SHEETS_SERVICE_ACCOUNT
     creds = Credentials.from_service_account_file(credentials_file, scopes=SCOPES)
     service = build("sheets", "v4", credentials=creds)
     return service.spreadsheets()

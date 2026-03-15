@@ -3,6 +3,7 @@ Cold Email Automation - Main Orchestrator
 Reads the Cold Email sheet, processes triggers, coordinates all modules.
 
 Usage:
+    cd src
     python main.py              # Process all pending rows
     python main.py --status     # Show daily status
     python main.py --test       # Test with a sample row
@@ -11,7 +12,7 @@ import sys
 import logging
 from datetime import datetime, timedelta
 
-from config import STATUS
+from config import STATUS, DATA_DIR
 from sheets_handler import (
     get_sheets_service, read_universe_row, read_cold_email_rows,
     update_cold_email_row, fill_contacts, fill_job_info, check_duplicate
@@ -22,13 +23,14 @@ from email_generator import generate_emails, generate_follow_up
 from gmail_drafter import create_batch_drafts, get_daily_status
 
 # ─── Logging Setup ────────────────────────────────────────────
+log_file = str(DATA_DIR / "automation.log")
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(message)s",
     datefmt="%H:%M:%S",
     handlers=[
         logging.StreamHandler(),
-        logging.FileHandler("data/automation.log", mode="a")
+        logging.FileHandler(log_file, mode="a")
     ]
 )
 logger = logging.getLogger(__name__)
@@ -201,7 +203,7 @@ def process_ready(sheets, row: dict):
         job_title=job_title,
         location=location,
         sector=sector.lower(),
-        company_size="mid_size",  # TODO: store from FIND step
+        company_size="mid_size",
         name_drop=name_drop
     )
 
@@ -343,7 +345,7 @@ def show_status():
 def main():
     """Main entry point."""
     print("\n" + "="*60)
-    print("  COLD EMAIL AUTOMATION v1.0")
+    print("  REACHOUT-AI | Cold Email Automation v1.0")
     print("="*60)
 
     # Parse args

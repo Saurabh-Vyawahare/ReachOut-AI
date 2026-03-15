@@ -1,0 +1,24 @@
+[project]
+name = "reachout-ai"
+version = "0.1.0"
+description = ""
+authors = [
+    {name = "Saurabh-Vyawahare",email = "66372594+Saurabh-Vyawahare@users.noreply.github.com"}
+]
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "google-api-python-client (>=2.192.0,<3.0.0)",
+    "google-auth-httplib2 (>=0.3.0,<0.4.0)",
+    "google-auth-oauthlib (>=1.3.0,<2.0.0)",
+    "anthropic (>=0.84.0,<0.85.0)",
+    "requests (>=2.32.5,<3.0.0)",
+    "beautifulsoup4 (>=4.14.3,<5.0.0)",
+    "python-dotenv (>=1.2.2,<2.0.0)",
+    "openai (>=2.26.0,<3.0.0)"
+]
+
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
