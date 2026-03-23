@@ -227,3 +227,41 @@ def get_next_empty_row(sheets) -> int:
     except Exception as e:
         logger.error(f"Failed to get next empty row: {e}")
         return 2  # Default to row 2 (after header)
+
+
+# ─── v2 Extensions ──────────────────────────────────────────
+
+def update_standoff_result(sheets, row_number: int, winner: str, quality_score: float):
+    """Update the scout winner and quality score columns."""
+    update_cold_email_row(sheets, row_number, {
+        "Q": winner,
+        "R": str(round(quality_score, 1)),
+    })
+
+
+def update_follow_up_dates(sheets, row_number: int, fu1_date: str, fu2_date: str):
+    """Set scheduled follow-up dates."""
+    update_cold_email_row(sheets, row_number, {
+        "S": fu1_date,
+        "T": fu2_date,
+    })
+
+
+def log_standoff_to_sheet(sheets, company: str, winner: str, reason: str):
+    """Log standoff result to the Standoff Tracker tab."""
+    from config import SPREADSHEET_ID, STANDOFF_TAB
+    from datetime import datetime
+    try:
+        range_str = f"'{STANDOFF_TAB}'!A:D"
+        result = sheets.values().get(spreadsheetId=SPREADSHEET_ID, range=range_str).execute()
+        next_row = len(result.get("values", [])) + 1
+
+        sheets.values().update(
+            spreadsheetId=SPREADSHEET_ID,
+            range=f"'{STANDOFF_TAB}'!A{next_row}:D{next_row}",
+            valueInputOption="USER_ENTERED",
+            body={"values": [[datetime.now().isoformat(), company, winner, reason]]}
+        ).execute()
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"Standoff log to sheet failed: {e}")

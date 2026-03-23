@@ -1,6 +1,7 @@
 """
-Cold Email Automation - Configuration
-Dual API: Grok/xAI (contact finding) + Anthropic Claude (email generation)
+ReachOut-AI v2.0 — Configuration
+Dual-scout standoff, quality gate, business-day reply monitor.
+APIs: Grok/xAI (Scout A) + SerpAPI + Anthropic Claude (Haiku + Sonnet)
 """
 import os
 from pathlib import Path
@@ -14,18 +15,21 @@ DATA_DIR = BASE_DIR / "data"
 DATA_DIR.mkdir(exist_ok=True)
 
 # ─── API Keys ────────────────────────────────────────────────
-XAI_API_KEY = os.getenv("XAI_API_KEY")                      # Grok (contact finding + web/X search)
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")           # Claude (email generation)
+XAI_API_KEY = os.getenv("XAI_API_KEY")                      # Grok (Scout A)
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")           # Claude (Haiku + Sonnet)
+SERPAPI_KEY = os.getenv("SERPAPI_KEY")                        # SerpAPI (Scout B)
 
 # ─── Model Configuration ─────────────────────────────────────
-CONTACT_FINDER_MODEL = "grok-4-1-fast-reasoning"              # $0.20/$0.50 per M + $5/1K searches
-EMAIL_GENERATOR_MODEL = "claude-sonnet-4-6"                   # Best email quality
+SCOUT_GROK_MODEL = "grok-4-1-fast-reasoning"                  # Scout A: web + X search
+SCOUT_HAIKU_MODEL = "claude-haiku-4-5-20251001"               # Scout B parser + Validator + QG + JD Analyzer
+EMAIL_GENERATOR_MODEL = "claude-sonnet-4-6"                   # Email composer (quality matters)
 EMAIL_TEMPERATURE = 0.7
 
 # ─── Google Sheets ───────────────────────────────────────────
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID")
 UNIVERSE_TAB = "Universe"
 COLD_EMAIL_TAB = "Cold Email"
+STANDOFF_TAB = "Standoff Tracker"                             # NEW: logs Grok vs SerpAPI wins
 JD_COLUMN = "G"
 
 # ─── Credential Files ────────────────────────────────────────
@@ -40,19 +44,28 @@ GMAIL_ACCOUNTS = [
     {"email": os.getenv("GMAIL_4"), "credentials_file": str(CREDENTIALS_DIR / "gmail_4_token.json"), "daily_cap": 10},
 ]
 
-# ─── Sheet Columns ───────────────────────────────────────────
+# ─── Sheet Columns (v2 expanded) ─────────────────────────────
 COLD_EMAIL_COLUMNS = {
     "A": "universe_row", "B": "status", "C": "company",
     "D": "job_title", "E": "location", "F": "sector",
     "G": "contact_1", "H": "contact_2", "I": "contact_3",
     "J": "email_1", "K": "email_2", "L": "email_3",
     "M": "reply_from", "N": "gmail_used", "O": "sent_date", "P": "notes",
+    "Q": "scout_winner",       # NEW: "grok" or "serpapi"
+    "R": "quality_score",      # NEW: avg quality gate score
+    "S": "fu1_date",           # NEW: follow-up 1 scheduled date
+    "T": "fu2_date",           # NEW: follow-up 2 scheduled date
 }
 
 STATUS = {
     "FIND": "FIND", "READY": "READY", "SENT": "SENT",
     "FOLLOW_UP_1": "FU1", "FOLLOW_UP_2": "FU2",
     "REPLIED": "REPLIED", "DONE": "DONE", "ERROR": "ERROR",
+    # v2 new statuses
+    "PROCESSING": "PROCESSING",
+    "SCOUTING": "SCOUTING",
+    "COMPOSING": "COMPOSING",
+    "DRAFTS_READY": "DRAFTS_READY",
 }
 
 # ─── Contact Finder Settings ─────────────────────────────────
@@ -99,11 +112,34 @@ SECTOR_KEYWORDS = {
     ]
 }
 
+# ─── Email Settings ──────────────────────────────────────────
 MAX_EMAILS_PER_JOB = 3
-FOLLOW_UP_1_DAYS = 5
-FOLLOW_UP_2_DAYS = 14
+FOLLOW_UP_1_BIZ_DAYS = 3                                     # v2: business days, not calendar
+FOLLOW_UP_2_BIZ_DAYS = 6                                     # v2: 6 biz days after send
 
+# ─── Quality Gate ────────────────────────────────────────────
+QUALITY_GATE_MIN_SCORE = 7                                    # reject below this
+QUALITY_GATE_MAX_RETRIES = 2                                  # max regeneration attempts
+
+# ─── SerpAPI Settings ────────────────────────────────────────
+SERPAPI_SEARCHES_PER_COMPANY = 2                              # LinkedIn + recruiter search
+
+# ─── Sender Info ─────────────────────────────────────────────
 SENDER_NAME = "Saurabh Vyawahare"
 SENDER_PHONE = "857-230-7888"
 SENDER_EMAIL = "saurabhvy.tech@gmail.com"
 SENDER_LINKEDIN = "linkedin.com/in/saurabh-vyawahare"
+
+SENDER_EXPERIENCE = """
+- Survival analysis, XGBoost, LightGBM, logistic regression for predictive models
+- Customer segmentation using k-means clustering on 1M+ records
+- Churn prediction, retention analytics, customer lifetime value modeling
+- A/B testing pipelines for pricing, promotions, campaign measurement
+- Multi-touch attribution for marketing channel ROI
+- Recommendation engines using collaborative filtering
+- ETL/SQL pipelines, Snowflake, MongoDB, data migration
+- Power BI and Tableau dashboards for stakeholder reporting
+- NLP, vector search, RAG systems, OpenAI API integration
+- Real-time ML monitoring (drift detection, latency, accuracy)
+- Healthcare claims analysis, risk scoring, MedDRA mapping, compliance
+"""
