@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Eye, EyeOff, ArrowLeft, Mail, Lock, User } from 'lucide-react'
+import { Eye, EyeOff, ArrowLeft, Mail, Lock, User, Loader2 } from 'lucide-react'
+import { signInWithEmail, signUpWithEmail, signInWithGoogle } from '../data/supabase'
 
 const container = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.08, delayChildren: 0.15 } } }
 const item = { hidden: { y: 16, opacity: 0 }, visible: { y: 0, opacity: 1, transition: { duration: 0.45, ease: 'easeOut' } } }
@@ -46,10 +47,46 @@ const STATS = [
 
 export default function Auth({ mode: initialMode = 'login', onBack, onAuth }) {
   const [mode, setMode] = useState(initialMode)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault()
-    onAuth?.()
+    setError('')
+    setLoading(true)
+
+    const form = new FormData(e.target)
+    const email = form.get('email')
+    const password = form.get('password')
+    const name = form.get('name')
+
+    try {
+      if (mode === 'login') {
+        const { error } = await signInWithEmail(email, password)
+        if (error) { setError(error.message); setLoading(false); return }
+      } else {
+        const { error } = await signUpWithEmail(email, password, name)
+        if (error) { setError(error.message); setLoading(false); return }
+      }
+      onAuth?.()
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleGoogle = async () => {
+    setError('')
+    const { error } = await signInWithGoogle()
+    if (error) {
+      // If Supabase not configured, just proceed (local dev)
+      if (error.message.includes('not configured')) {
+        onAuth?.()
+      } else {
+        setError(error.message)
+      }
+    }
   }
 
   return (
@@ -82,11 +119,18 @@ export default function Auth({ mode: initialMode = 'login', onBack, onAuth }) {
             </motion.p>
 
             <motion.div variants={item} className="mt-8">
-              <button onClick={onAuth}
+              <button onClick={handleGoogle}
                 className="w-full flex items-center justify-center gap-3 border border-gray-200 rounded-xl py-3.5 text-[14px] text-gray-700 font-medium hover:bg-gray-50 transition-colors cursor-pointer">
                 <GoogleIcon /> Continue with Google
               </button>
             </motion.div>
+
+            {error && (
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+                className="mt-3 p-3 rounded-xl bg-red-50 border border-red-100 text-[13px] text-red-600">
+                {error}
+              </motion.div>
+            )}
 
             <motion.div variants={item} className="relative my-6">
               <div className="absolute inset-0 flex items-center"><div className="w-full border-t border-gray-200" /></div>
@@ -115,8 +159,9 @@ export default function Auth({ mode: initialMode = 'login', onBack, onAuth }) {
               )}
 
               <motion.div variants={item}>
-                <button type="submit"
-                  className="w-full py-3.5 rounded-xl bg-stone-blue text-white font-medium text-[14px] hover:bg-stone-blue-dark transition-colors cursor-pointer">
+                <button type="submit" disabled={loading}
+                  className="w-full py-3.5 rounded-xl bg-stone-blue text-white font-medium text-[14px] hover:bg-stone-blue-dark transition-colors cursor-pointer disabled:opacity-50 flex items-center justify-center gap-2">
+                  {loading && <Loader2 size={16} className="animate-spin" />}
                   {mode === 'login' ? 'Sign in' : 'Create account'}
                 </button>
               </motion.div>

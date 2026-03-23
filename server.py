@@ -14,8 +14,9 @@ from pathlib import Path
 from contextlib import asynccontextmanager
 from concurrent.futures import ThreadPoolExecutor
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Add src to path
@@ -29,6 +30,7 @@ from sheets_handler import (
 from gmail_drafter import get_daily_status
 from validator import get_standoff_stats
 from reply_monitor import get_follow_up_dates, is_business_day
+from auth import get_current_user
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -51,12 +53,29 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="ReachOut-AI v2.0", lifespan=lifespan)
 
+# CORS — allow local dev + Railway domain
+ALLOWED_ORIGINS = [
+    "http://localhost:5173",
+    "http://localhost:3000",
+    "http://127.0.0.1:5173",
+]
+# Add Railway domain if set
+railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
+if railway_domain:
+    ALLOWED_ORIGINS.append(f"https://{railway_domain}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/api/health")
+def health():
+    """Health check for Railway."""
+    return {"status": "ok", "version": "2.0.0", "sheets": sheets is not None}
 
 
 # ─── Models ──────────────────────────────────────────────────
@@ -74,7 +93,7 @@ class UpdateStatusRequest(BaseModel):
 # ─── Dashboard Endpoints ─────────────────────────────────────
 
 @app.get("/api/dashboard")
-def get_dashboard():
+def get_dashboard(user=Depends(get_current_user)):
     """Main dashboard data: stats, pipeline rows, gmail health, standoff."""
     rows = read_cold_email_rows(sheets)
     gmail = get_daily_status()
@@ -102,7 +121,7 @@ def get_dashboard():
 
 
 @app.get("/api/pipeline")
-def get_pipeline():
+def get_pipeline(user=Depends(get_current_user)):
     """All pipeline jobs with their current status."""
     rows = read_cold_email_rows(sheets)
     jobs = []
@@ -142,7 +161,7 @@ def get_pipeline():
 
 
 @app.get("/api/standoff")
-def get_standoff():
+def get_standoff(user=Depends(get_current_user)):
     """Detailed standoff history."""
     stats = get_standoff_stats()
     log_file = DATA_DIR / "standoff_log.json"
@@ -155,13 +174,13 @@ def get_standoff():
 
 
 @app.get("/api/gmail-health")
-def get_gmail_health():
+def get_gmail_health(user=Depends(get_current_user)):
     """Current Gmail account usage."""
     return get_daily_status()
 
 
 @app.get("/api/activity")
-def get_activity():
+def get_activity(user=Depends(get_current_user)):
     """Recent activity from automation log."""
     log_file = DATA_DIR / "automation_v2.log"
     if not log_file.exists():
@@ -217,7 +236,7 @@ def get_activity():
 # ─── Pipeline Actions ─────────────────────────────────────────
 
 @app.post("/api/trigger-find")
-def trigger_find(req: AddJobRequest):
+def trigger_find(req: AddJobRequest, user=Depends(get_current_user)):
     """Trigger FIND for a specific row."""
     try:
         update_cold_email_row(sheets, req.universe_row, {
@@ -230,7 +249,7 @@ def trigger_find(req: AddJobRequest):
 
 
 @app.post("/api/update-status")
-def update_status(req: UpdateStatusRequest):
+def update_status(req: UpdateStatusRequest, user=Depends(get_current_user)):
     """Update a row's status."""
     try:
         update_cold_email_row(sheets, req.row, {"B": req.status})
@@ -240,7 +259,7 @@ def update_status(req: UpdateStatusRequest):
 
 
 @app.post("/api/run-pipeline")
-def run_pipeline_endpoint():
+def run_pipeline_endpoint(user=Depends(get_current_user)):
     """Run the main pipeline (process all pending rows)."""
     try:
         from main import process_all
@@ -251,7 +270,7 @@ def run_pipeline_endpoint():
 
 
 @app.post("/api/run-monitor")
-def run_monitor_endpoint():
+def run_monitor_endpoint(user=Depends(get_current_user)):
     """Run the reply monitor."""
     try:
         from main import run_monitor
@@ -316,7 +335,7 @@ class ChatRequest(BaseModel):
 
 
 @app.post("/api/chat")
-def chat_assistant(req: ChatRequest):
+def chat_assistant(req: ChatRequest, user=Depends(get_current_user)):
     """Simple Haiku-powered assistant that answers questions about the pipeline."""
     try:
         from anthropic import Anthropic
@@ -353,4 +372,20 @@ Recent jobs: {', '.join(r['company'] + ' (' + r['status'] + ')' for r in rows[-5
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    # Serve built React frontend if dist/ exists
+    dist_dir = Path(__file__).parent / "frontend" / "dist"
+    if dist_dir.exists():
+        from fastapi.responses import FileResponse
+
+        @app.get("/{full_path:path}")
+        async def serve_spa(full_path: str):
+            file_path = dist_dir / full_path
+            if file_path.exists() and file_path.is_file():
+                return FileResponse(file_path)
+            return FileResponse(dist_dir / "index.html")
+
+        logger.info(f"Serving frontend from {dist_dir}")
+
+    port = int(os.getenv("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
