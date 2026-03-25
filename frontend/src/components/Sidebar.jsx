@@ -1,4 +1,4 @@
-import { LayoutDashboard, GitBranch, MessageCircle, Plus, Settings } from 'lucide-react'
+import { LayoutDashboard, GitBranch, MessageCircle, Plus, Settings, LogOut } from 'lucide-react'
 
 const NAV_ITEMS = [
   { key: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -6,7 +6,7 @@ const NAV_ITEMS = [
   { key: 'chat', label: 'Assistant', icon: MessageCircle },
 ]
 
-export default function Sidebar({ active, onNavigate, onAddJob }) {
+export default function Sidebar({ active, onNavigate, onAddJob, onLogout }) {
   return (
     <aside className="w-[220px] h-screen bg-stone-blue-900 text-white flex flex-col fixed left-0 top-0 z-50">
       <div className="px-5 py-6 flex items-center gap-3">
@@ -19,12 +19,9 @@ export default function Sidebar({ active, onNavigate, onAddJob }) {
         <span className="text-[15px] font-medium tracking-tight">ReachOut AI</span>
       </div>
 
-      <button
-        onClick={onAddJob}
-        className="mx-4 mb-6 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-stone-blue hover:bg-stone-blue-light transition-colors text-sm font-medium cursor-pointer"
-      >
-        <Plus size={15} />
-        Add job URL
+      <button onClick={onAddJob}
+        className="mx-4 mb-6 flex items-center justify-center gap-2 px-4 py-2.5 rounded-lg bg-stone-blue hover:bg-stone-blue-light transition-colors text-sm font-medium cursor-pointer">
+        <Plus size={15} /> Add job URL
       </button>
 
       <nav className="flex-1 px-3">
@@ -32,15 +29,9 @@ export default function Sidebar({ active, onNavigate, onAddJob }) {
           const Icon = item.icon
           const isActive = active === item.key
           return (
-            <button
-              key={item.key}
-              onClick={() => onNavigate(item.key)}
+            <button key={item.key} onClick={() => onNavigate(item.key)}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg mb-1 text-sm transition-all cursor-pointer
-                ${isActive
-                  ? 'bg-white/12 text-white font-medium'
-                  : 'text-white/55 hover:bg-white/6 hover:text-white/80'
-                }`}
-            >
+                ${isActive ? 'bg-white/12 text-white font-medium' : 'text-white/55 hover:bg-white/6 hover:text-white/80'}`}>
               <Icon size={17} strokeWidth={isActive ? 2 : 1.5} />
               {item.label}
             </button>
@@ -50,12 +41,13 @@ export default function Sidebar({ active, onNavigate, onAddJob }) {
 
       <div className="px-3 pb-5">
         <button className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-white/40 hover:bg-white/6 hover:text-white/60 transition-all cursor-pointer">
-          <Settings size={17} strokeWidth={1.5} />
-          Settings
+          <Settings size={17} strokeWidth={1.5} /> Settings
         </button>
-        <div className="mt-4 px-3 text-[11px] text-white/25">
-          v2.0 — Multi-agent architecture
-        </div>
+        <button onClick={onLogout}
+          className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm text-red-400/60 hover:bg-red-500/10 hover:text-red-400 transition-all cursor-pointer mt-1">
+          <LogOut size={17} strokeWidth={1.5} /> Sign out
+        </button>
+        <div className="mt-4 px-3 text-[11px] text-white/25">v2.0 — Multi-agent architecture</div>
       </div>
     </aside>
   )

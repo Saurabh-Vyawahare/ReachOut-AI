@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Eye, EyeOff, ArrowLeft, Mail, Lock, User, Loader2 } from 'lucide-react'
+import { Eye, EyeOff, ArrowLeft, Mail, Lock, User, Loader2, Zap } from 'lucide-react'
 import { signInWithEmail, signUpWithEmail, signInWithGoogle } from '../data/supabase'
 
 const container = { hidden: { opacity: 0 }, visible: { opacity: 1, transition: { staggerChildren: 0.08, delayChildren: 0.15 } } }

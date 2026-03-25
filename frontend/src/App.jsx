@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { AnimatePresence, motion } from 'framer-motion'
 import Sidebar from './components/Sidebar'
 import AddJobModal from './components/AddJobModal'
@@ -7,6 +7,7 @@ import Pipeline from './views/Pipeline'
 import Chat from './views/Chat'
 import Landing from './views/Landing'
 import Auth from './views/Auth'
+import { signOut, getSession } from './data/supabase'
 
 const fade = {
   initial: { opacity: 0 },
@@ -20,6 +21,15 @@ export default function App() {
   const [showAddJob, setShowAddJob] = useState(false)
   const [selectedJobId, setSelectedJobId] = useState(null)
   const [authMode, setAuthMode] = useState('login')
+  const [checkingSession, setCheckingSession] = useState(true)
+
+  // Check for existing session on load
+  useEffect(() => {
+    getSession().then(session => {
+      if (session) setScreen('app')
+      setCheckingSession(false)
+    }).catch(() => setCheckingSession(false))
+  }, [])
 
   const handleNavigate = (target, jobId) => {
     setView(target)
@@ -28,7 +38,20 @@ export default function App() {
   }
 
   const handleAuth = () => setScreen('app')
-  const handleLogout = () => { setScreen('landing'); setView('dashboard') }
+
+  const handleLogout = async () => {
+    await signOut()
+    setScreen('landing')
+    setView('dashboard')
+  }
+
+  if (checkingSession) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-surface">
+        <div className="w-8 h-8 border-2 border-stone-blue border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
 
   if (screen === 'landing') {
     return (
@@ -47,11 +70,7 @@ export default function App() {
     return (
       <AnimatePresence mode="wait">
         <motion.div key="auth" {...fade}>
-          <Auth
-            mode={authMode}
-            onBack={() => setScreen('landing')}
-            onAuth={handleAuth}
-          />
+          <Auth mode={authMode} onBack={() => setScreen('landing')} onAuth={handleAuth} />
         </motion.div>
       </AnimatePresence>
     )
@@ -59,11 +78,7 @@ export default function App() {
 
   return (
     <div className="flex min-h-screen bg-surface">
-      <Sidebar
-        active={view}
-        onNavigate={handleNavigate}
-        onAddJob={() => setShowAddJob(true)}
-      />
+      <Sidebar active={view} onNavigate={handleNavigate} onAddJob={() => setShowAddJob(true)} onLogout={handleLogout} />
       <main className="ml-[220px] flex-1 p-6 max-w-[1200px]">
         <AnimatePresence mode="wait">
           {view === 'dashboard' && <Dashboard key="dash" onNavigate={handleNavigate} />}
