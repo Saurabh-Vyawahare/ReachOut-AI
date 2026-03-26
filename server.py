@@ -209,16 +209,27 @@ def run_scouts_for_row(cold_email_row):
 
             grok_contacts = []
             serp_contacts = []
+            grok_result = {}
+            serp_result = {}
             try:
-                grok_contacts = grok_future.result(timeout=60)
+                grok_result = grok_future.result(timeout=60)
+                # Scouts return dict {"contacts": [...], ...} or a list
+                if isinstance(grok_result, dict):
+                    grok_contacts = grok_result.get("contacts", [])
+                elif isinstance(grok_result, list):
+                    grok_contacts = grok_result
             except Exception as e:
                 logger.error(f"Grok scout failed: {e}")
             try:
-                serp_contacts = serp_future.result(timeout=60)
+                serp_result = serp_future.result(timeout=60)
+                if isinstance(serp_result, dict):
+                    serp_contacts = serp_result.get("contacts", [])
+                elif isinstance(serp_result, list):
+                    serp_contacts = serp_result
             except Exception as e:
                 logger.error(f"SerpAPI scout failed: {e}")
 
-        # Ensure contacts are Contact objects (scouts may return strings or dicts)
+        # Ensure contacts are Contact objects
         def ensure_contacts(raw_list):
             result = []
             for item in (raw_list or []):
@@ -237,11 +248,17 @@ def run_scouts_for_row(cold_email_row):
         grok_contacts = ensure_contacts(grok_contacts)
         serp_contacts = ensure_contacts(serp_contacts)
 
+        # Pass full scout results to validator (includes name_drop, company_size)
+        grok_full = grok_result if isinstance(grok_result, dict) else {"contacts": grok_contacts}
+        serp_full = serp_result if isinstance(serp_result, dict) else {"contacts": serp_contacts}
+        grok_full["contacts"] = grok_contacts
+        serp_full["contacts"] = serp_contacts
+
         # Run standoff
         job_title = target.get("job_title", "")
         result = validate_standoff(
-            {"contacts": grok_contacts},
-            {"contacts": serp_contacts},
+            grok_full,
+            serp_full,
             company,
             job_title=job_title,
         )
