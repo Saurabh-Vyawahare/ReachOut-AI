@@ -225,14 +225,12 @@ def run_scouts_for_row(cold_email_row):
                 if isinstance(item, Contact):
                     result.append(item)
                 elif isinstance(item, str):
-                    result.append(Contact(name=item, title="", contact_type="unknown"))
+                    result.append(Contact(name=item))
                 elif isinstance(item, dict):
-                    result.append(Contact(
-                        name=item.get("name", ""),
-                        title=item.get("title", ""),
-                        contact_type=item.get("contact_type", "unknown"),
-                        linkedin_url=item.get("linkedin_url", ""),
-                    ))
+                    try:
+                        result.append(Contact(**{k: v for k, v in item.items() if v}))
+                    except TypeError:
+                        result.append(Contact(name=item.get("name", "")))
             return result
 
         grok_contacts = ensure_contacts(grok_contacts)
