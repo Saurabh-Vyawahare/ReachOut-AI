@@ -198,13 +198,14 @@ def run_scouts_for_row(cold_email_row):
 
         # Analyze JD
         company = target.get("company", "")
+        location = target.get("location", "Remote")
         jd_analysis = analyze_jd(jd_url)
 
         # Run scouts in parallel
         from concurrent.futures import ThreadPoolExecutor, as_completed
         with ThreadPoolExecutor(max_workers=2) as pool:
-            grok_future = pool.submit(scout_grok, company, jd_analysis)
-            serp_future = pool.submit(scout_serpapi, company, jd_analysis)
+            grok_future = pool.submit(scout_grok, company, jd_analysis, location)
+            serp_future = pool.submit(scout_serpapi, company, jd_analysis, location)
 
             grok_contacts = []
             serp_contacts = []
