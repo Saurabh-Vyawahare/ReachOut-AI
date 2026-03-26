@@ -3,6 +3,8 @@ Google Sheets Handler Module
 Reads from Universe tab, reads/writes Cold Email tab.
 Uses Google Sheets API v4.
 """
+import os
+import json
 import logging
 from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
@@ -15,9 +17,17 @@ SCOPES = ["https://www.googleapis.com/auth/spreadsheets"]
 
 def get_sheets_service(credentials_file: str = None):
     """Initialize Google Sheets API service."""
-    if credentials_file is None:
-        credentials_file = SHEETS_SERVICE_ACCOUNT
-    creds = Credentials.from_service_account_file(credentials_file, scopes=SCOPES)
+    # Try env var first (for Render/cloud deployment)
+    env_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON")
+    if env_json:
+        info = json.loads(env_json)
+        creds = Credentials.from_service_account_info(info, scopes=SCOPES)
+    else:
+        # Fall back to file (local dev)
+        if credentials_file is None:
+            credentials_file = SHEETS_SERVICE_ACCOUNT
+        creds = Credentials.from_service_account_file(credentials_file, scopes=SCOPES)
+    
     service = build("sheets", "v4", credentials=creds)
     return service.spreadsheets()
 
