@@ -418,6 +418,16 @@ function JobCard({ job, onRefresh }) {
     }
   }
 
+  const handleMarkSent = async () => {
+    try {
+      await api.updateStatus(job.row, 'SENT')
+      setSuccess('Marked as sent! Dashboard will update shortly.')
+      setTimeout(() => { setSuccess(null); onRefresh() }, 2000)
+    } catch (err) {
+      setError(err.message)
+    }
+  }
+
   const handleGo = async () => {
     setGenerating(true)
     setError(null)
@@ -632,6 +642,22 @@ function JobCard({ job, onRefresh }) {
                         <p className="text-[10px] text-gray-400 text-center">
                           Paste at least one email from Apollo to enable GO
                         </p>
+                      )}
+
+                      {/* Auto-sent detection active for DRAFTS_READY */}
+                      {job.status?.toUpperCase() === 'DRAFTS_READY' && (
+                        <div className="text-center space-y-1.5">
+                          <p className="text-[11px] text-green-600 flex items-center justify-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                            Watching Gmail — will auto-mark as Sent when you send the drafts
+                          </p>
+                          <button
+                            onClick={handleMarkSent}
+                            className="text-[10px] text-gray-400 hover:text-gray-600 underline"
+                          >
+                            Or mark sent manually
+                          </button>
+                        </div>
                       )}
                     </div>
                   )}

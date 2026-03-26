@@ -41,6 +41,7 @@ sheets = None
 
 # ─── Temp resume storage (in-memory for Render) ──────────────
 _resume_store = {}  # row -> {"path": ..., "filename": ...}
+_draft_store = {}   # row -> [{"draft_id": ..., "gmail_account": ..., "account_index": ...}]
 
 # ─── Cache to avoid hammering Google Sheets ──────────────────
 _cache = {"rows": None, "rows_time": 0, "gmail": None, "gmail_time": 0}
@@ -81,6 +82,69 @@ def get_cached_gmail():
 def bust_cache():
     _cache["rows"] = None
     _cache["rows_time"] = 0
+
+
+# ─── Auto-detect sent drafts ─────────────────────────────────
+_last_draft_check = {"time": 0}
+DRAFT_CHECK_INTERVAL = 30  # seconds
+
+def check_drafts_sent():
+    """Check if any DRAFTS_READY rows have had their drafts sent from Gmail."""
+    now = time.time()
+    if now - _last_draft_check["time"] < DRAFT_CHECK_INTERVAL:
+        return
+    _last_draft_check["time"] = now
+
+    if not _draft_store:
+        return
+
+    from gmail_drafter import get_gmail_service
+
+    rows_to_mark = []
+    for row, drafts in list(_draft_store.items()):
+        all_sent = True
+        for draft_info in drafts:
+            draft_id = draft_info.get("draft_id")
+            gmail_account = draft_info.get("gmail_account", "")
+            if not draft_id:
+                continue
+            try:
+                # Find account index
+                account_index = None
+                for i, acct in enumerate(GMAIL_ACCOUNTS):
+                    if acct.get("email") == gmail_account:
+                        account_index = i
+                        break
+                if account_index is None:
+                    continue
+
+                service = get_gmail_service(account_index)
+                # Try to get the draft — if it's gone, user sent it
+                try:
+                    service.users().drafts().get(userId="me", id=draft_id).execute()
+                    # Draft still exists — not sent yet
+                    all_sent = False
+                    break
+                except Exception:
+                    # Draft not found = sent!
+                    pass
+            except Exception as e:
+                logger.error(f"Draft check failed for row {row}: {e}")
+                all_sent = False
+                break
+
+        if all_sent and drafts:
+            rows_to_mark.append(row)
+
+    # Mark sent rows
+    for row in rows_to_mark:
+        try:
+            update_cold_email_row(sheets, row, {"B": "SENT"})
+            del _draft_store[row]
+            bust_cache()
+            logger.info(f"Auto-detected: row {row} drafts sent — marked SENT")
+        except Exception as e:
+            logger.error(f"Failed to auto-mark row {row}: {e}")
 
 
 # ─── Helper: Get next empty Universe row ─────────────────────
@@ -435,7 +499,8 @@ def generate_drafts_for_row(cold_email_row, resume_path=None):
         bust_cache()
 
         drafts_created = 0
-        gmail_used = ""
+        gmail_accounts_used = []
+        draft_ids = []
         for email_data in approved_emails:
             try:
                 to_email = email_data.get("to_email", "")
@@ -448,10 +513,23 @@ def generate_drafts_for_row(cold_email_row, resume_path=None):
                     body=email_data.get("body", ""),
                     attachment_path=resume_path,
                 )
-                drafts_created += 1
-                gmail_used = result.get("gmail_account", gmail_used)
+                if result.get("success"):
+                    drafts_created += 1
+                    acct = result.get("gmail_account", "")
+                    if acct and acct not in gmail_accounts_used:
+                        gmail_accounts_used.append(acct)
+                    draft_ids.append({
+                        "draft_id": result.get("draft_id"),
+                        "gmail_account": acct,
+                    })
             except Exception as e:
                 logger.error(f"Draft creation failed: {e}")
+
+        gmail_used = ", ".join(gmail_accounts_used)
+
+        # Store draft IDs for auto-sent detection
+        if draft_ids:
+            _draft_store[cold_email_row] = draft_ids
 
         # Update sheet with results
         today = date.today().strftime("%m/%d/%Y")
@@ -583,40 +661,44 @@ def get_dashboard(user=Depends(get_current_user), range: str = "all"):
     standoff = get_standoff_stats()
 
     # Time range filtering
+    all_rows = rows  # Keep unfiltered for total count
     if range != "all":
-        today = date.today()
+        today_date = date.today()
         if range == "today":
-            cutoff = today
+            cutoff = today_date
         elif range == "week":
-            cutoff = today - timedelta(days=7)
+            cutoff = today_date - timedelta(days=7)
         elif range == "2weeks":
-            cutoff = today - timedelta(days=14)
+            cutoff = today_date - timedelta(days=14)
         elif range == "month":
-            cutoff = today - timedelta(days=30)
+            cutoff = today_date - timedelta(days=30)
         else:
             cutoff = None
 
         if cutoff:
             filtered = []
             for r in rows:
-                sent = r.get("sent_date", "")
+                # Check sent_date first
+                sent = r.get("sent_date", "").strip()
+                parsed_date = None
                 if sent:
-                    try:
-                        # Try common date formats
-                        for fmt in ["%m/%d/%Y", "%Y-%m-%d", "%d %b", "%d/%m/%Y"]:
-                            try:
-                                d = datetime.strptime(sent.strip(), fmt).date()
-                                if fmt == "%d %b":
-                                    d = d.replace(year=today.year)
-                                if d >= cutoff:
-                                    filtered.append(r)
-                                break
-                            except ValueError:
-                                continue
-                    except:
-                        filtered.append(r)  # Include if can't parse date
+                    for fmt in ["%m/%d/%Y", "%Y-%m-%d", "%d %b", "%d/%m/%Y"]:
+                        try:
+                            parsed_date = datetime.strptime(sent, fmt).date()
+                            if fmt == "%d %b":
+                                parsed_date = parsed_date.replace(year=today_date.year)
+                            break
+                        except ValueError:
+                            continue
+
+                if parsed_date:
+                    if parsed_date >= cutoff:
+                        filtered.append(r)
                 else:
-                    filtered.append(r)  # Include rows without sent date
+                    # No sent_date: include if actively in pipeline (not old completed rows)
+                    status = r.get("status", "").upper()
+                    if status in ["FIND", "SCOUTING", "CONTACTS", "READY", "COMPOSING", "QG_CHECK", "DRAFTS_READY"]:
+                        filtered.append(r)
             rows = filtered
 
     active = [r for r in rows if r["status"] not in ["DONE", "REPLIED", ""]]
@@ -641,6 +723,12 @@ def get_dashboard(user=Depends(get_current_user), range: str = "all"):
 
 @app.get("/api/pipeline")
 def get_pipeline(user=Depends(get_current_user)):
+    # Auto-detect if user sent drafts from Gmail
+    try:
+        check_drafts_sent()
+    except Exception as e:
+        logger.error(f"Draft check error: {e}")
+
     rows = get_cached_rows()
     jobs = []
     for row in rows:
