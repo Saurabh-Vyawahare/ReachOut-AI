@@ -1,14 +1,14 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { motion } from 'framer-motion'
-import { ArrowUpRight, ArrowDownRight, ChevronRight, RefreshCw, Wifi, WifiOff, LogOut } from 'lucide-react'
+import { ArrowUpRight, ArrowDownRight, ChevronRight, RefreshCw, Wifi, WifiOff } from 'lucide-react'
 import { api } from '../data/api'
-import { PIPELINE_JOBS, STANDOFF_DATA, GMAIL_ACCOUNTS as MOCK_GMAIL, ACTIVITY_FEED, QUALITY_SCORES } from '../data/mockData'
+import { GMAIL_ACCOUNTS as MOCK_GMAIL } from '../data/mockData'
 
 const TIME_RANGES = [
-  { key: 'today', label: 'Today' },
-  { key: 'week', label: 'This week' },
-  { key: 'biweekly', label: '2 weeks' },
-  { key: 'month', label: 'This month' },
+  { key: 'today', label: 'Today', apiKey: 'today' },
+  { key: 'week', label: 'This week', apiKey: 'week' },
+  { key: 'biweekly', label: '2 weeks', apiKey: '2weeks' },
+  { key: 'month', label: 'This month', apiKey: 'month' },
 ]
 
 function StatCard({ label, value, sub, trend, color, delay }) {
@@ -126,19 +126,41 @@ export default function Dashboard({ onNavigate }) {
   const [pipeline, setPipeline] = useState(null)
   const [activity, setActivity] = useState(null)
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async (selectedRange) => {
     setLoading(true)
     try {
-      const [dash, pipe, act] = await Promise.all([api.getDashboard(), api.getPipeline(), api.getActivity()])
-      setDashboard(dash); setPipeline(pipe); setActivity(act); setIsLive(true)
+      // Map frontend range key to backend API key
+      const rangeMap = { today: 'today', week: 'week', biweekly: '2weeks', month: 'month' }
+      const apiRange = rangeMap[selectedRange] || 'today'
+
+      const [dash, pipe, act] = await Promise.all([
+        api.getDashboard(apiRange),
+        api.getPipeline(),
+        api.getActivity(),
+      ])
+      setDashboard(dash)
+      setPipeline(pipe)
+      setActivity(act)
+      setIsLive(true)
     } catch (e) {
       console.warn('API not available, using mock data:', e.message)
       setIsLive(false)
-    } finally { setLoading(false) }
-  }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
-  useEffect(() => { fetchData() }, [])
-  useEffect(() => { if (!isLive) return; const t = setInterval(fetchData, 300000); return () => clearInterval(t) }, [isLive])
+  // Fetch on mount and when range changes
+  useEffect(() => {
+    fetchData(range)
+  }, [range, fetchData])
+
+  // Auto-refresh every 5 minutes
+  useEffect(() => {
+    if (!isLive) return
+    const t = setInterval(() => fetchData(range), 300000)
+    return () => clearInterval(t)
+  }, [isLive, range, fetchData])
 
   const stats = dashboard?.stats || { active_pipeline: 0, drafts_ready: 0, sent: 0, replies: 0, reply_rate: 0 }
   const gmail = dashboard?.gmail || { accounts: MOCK_GMAIL, total_used: 0, total_remaining: 40 }
@@ -157,10 +179,10 @@ export default function Dashboard({ onNavigate }) {
               {isLive ? 'Live' : 'Offline'}
             </div>
           </div>
-          <p className="text-sm text-gray-400 mt-0.5">{dashboard?.today || new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}</p>
+          <p className="text-sm text-gray-400 mt-0.5">{dashboard?.today || new Date().toISOString().split('T')[0]}</p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={fetchData} className="p-2 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer" title="Refresh">
+          <button onClick={() => fetchData(range)} className="p-2 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer" title="Refresh">
             <RefreshCw size={14} className={`text-gray-400 ${loading ? 'animate-spin' : ''}`} />
           </button>
           <div className="flex items-center gap-1 bg-surface rounded-lg p-1 border border-border-light">

@@ -3,15 +3,20 @@ Gmail Drafter Module (v3 - Clean Round-Robin)
 Creates email drafts spreading across all 4 Gmail accounts.
 Continuous round-robin: Gmail #1 → #2 → #3 → #4 → #1 → ...
 Persists rotation position across runs. HTML formatted emails.
+Supports both file-based and env var credentials (for cloud deployment).
 """
 import base64
 import json
 import logging
+import os
+import tempfile
 from datetime import date
 from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from pathlib import Path
 from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from config import GMAIL_ACCOUNTS, SENDER_NAME, GMAIL_CLIENT_SECRET, DATA_DIR
@@ -82,28 +87,53 @@ def _save_rotation(rotation: dict):
         json.dump(rotation, f, indent=2)
 
 
-# ─── Gmail Service ────────────────────────────────────────────
+# ─── Gmail Service (supports file + env var credentials) ──────
 
 def get_gmail_service(account_index: int):
+    """
+    Get Gmail API service for a specific account.
+    Tries file-based credentials first (local dev), falls back to env vars (Render).
+    """
     account = GMAIL_ACCOUNTS[account_index]
     token_file = account["credentials_file"]
     creds = None
 
+    # Try 1: Load from file (local dev)
     if Path(token_file).exists():
         creds = Credentials.from_authorized_user_file(token_file, GMAIL_SCOPES)
 
-    if not creds or not creds.valid:
-        if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-        else:
-            flow = InstalledAppFlow.from_client_secrets_file(
-                GMAIL_CLIENT_SECRET, GMAIL_SCOPES
-            )
-            creds = flow.run_local_server(port=0)
+    # Try 2: Load from env var (cloud deployment)
+    if creds is None:
+        env_var_name = f"GMAIL_TOKEN_{account_index + 1}"
+        env_json = os.environ.get(env_var_name)
+        if env_json:
+            try:
+                token_data = json.loads(env_json)
+                creds = Credentials.from_authorized_user_info(token_data, GMAIL_SCOPES)
+                logger.info(f"Loaded Gmail token from env var {env_var_name}")
+            except Exception as e:
+                logger.error(f"Failed to parse {env_var_name}: {e}")
 
-        Path(token_file).parent.mkdir(parents=True, exist_ok=True)
-        with open(token_file, "w") as f:
-            f.write(creds.to_json())
+    if not creds:
+        raise Exception(
+            f"No Gmail credentials for account {account_index + 1}. "
+            f"Set {f'GMAIL_TOKEN_{account_index + 1}'} env var or provide token file."
+        )
+
+    # Refresh if expired
+    if not creds.valid:
+        if creds.expired and creds.refresh_token:
+            creds.refresh(Request())
+            # Save refreshed token back to env-compatible format
+            if Path(token_file).exists():
+                with open(token_file, "w") as f:
+                    f.write(creds.to_json())
+            logger.info(f"Refreshed token for account {account_index + 1}")
+        else:
+            raise Exception(
+                f"Gmail token for account {account_index + 1} is expired and cannot be refreshed. "
+                f"Run reauth_gmail.py locally to re-authorize."
+            )
 
     return build("gmail", "v1", credentials=creds)
 
@@ -111,8 +141,8 @@ def get_gmail_service(account_index: int):
 # ─── Draft Creation ───────────────────────────────────────────
 
 def create_draft(to_email: str, subject: str, body: str,
-                 account_index: int = None) -> dict:
-    """Create an email draft in the specified Gmail account."""
+                 account_index: int = None, attachment_path: str = None) -> dict:
+    """Create an email draft in the specified Gmail account, optionally with a PDF attachment."""
     if account_index is None:
         account_index = _get_next_available_account()
 
@@ -130,10 +160,34 @@ def create_draft(to_email: str, subject: str, body: str,
         service = get_gmail_service(account_index)
 
         html_body = _to_html(body)
-        message = MIMEText(html_body, "html")
-        message["to"] = to_email
-        message["from"] = f"{SENDER_NAME} <{account_email}>"
-        message["subject"] = subject
+
+        # Build message (with or without attachment)
+        if attachment_path and Path(attachment_path).exists():
+            message = MIMEMultipart()
+            message["to"] = to_email
+            message["from"] = f"{SENDER_NAME} <{account_email}>"
+            message["subject"] = subject
+
+            # HTML body
+            message.attach(MIMEText(html_body, "html"))
+
+            # PDF attachment
+            filename = Path(attachment_path).name
+            with open(attachment_path, "rb") as f:
+                pdf_data = f.read()
+            attachment = MIMEBase("application", "pdf")
+            attachment.set_payload(pdf_data)
+            encoders.encode_base64(attachment)
+            attachment.add_header(
+                "Content-Disposition",
+                f"attachment; filename={filename}"
+            )
+            message.attach(attachment)
+        else:
+            message = MIMEText(html_body, "html")
+            message["to"] = to_email
+            message["from"] = f"{SENDER_NAME} <{account_email}>"
+            message["subject"] = subject
 
         raw = base64.urlsafe_b64encode(message.as_bytes()).decode()
 
@@ -150,6 +204,7 @@ def create_draft(to_email: str, subject: str, body: str,
         logger.info(
             f"Draft created in {account_email} | "
             f"Usage: {usage['accounts'][account_email]}/{DAILY_CAP_PER_ACCOUNT}"
+            f"{' | Resume attached' if attachment_path else ''}"
         )
 
         return {
@@ -170,28 +225,34 @@ def create_draft(to_email: str, subject: str, body: str,
 
 
 def _get_next_available_account() -> int:
-    """Find the next Gmail account that hasn't hit its daily cap."""
+    """Find the next Gmail account in round-robin that hasn't hit its daily cap."""
     usage = _load_usage()
-    for i, account in enumerate(GMAIL_ACCOUNTS):
+    rotation = _load_rotation()
+    last_index = rotation.get("last_index", -1)
+
+    # Start from next account after last used
+    for offset in range(len(GMAIL_ACCOUNTS)):
+        i = (last_index + 1 + offset) % len(GMAIL_ACCOUNTS)
+        account = GMAIL_ACCOUNTS[i]
         email = account["email"]
         if not email:
             continue
         used = usage["accounts"].get(email, 0)
         if used < DAILY_CAP_PER_ACCOUNT:
+            # Update rotation
+            rotation["last_index"] = i
+            _save_rotation(rotation)
             return i
+
     return -1
 
 
 # ─── Batch Drafts with Round-Robin ────────────────────────────
 
-def create_batch_drafts(emails: list[dict]) -> list[dict]:
+def create_batch_drafts(emails: list[dict], attachment_path: str = None) -> list[dict]:
     """
     Create drafts spreading emails across ALL accounts in continuous round-robin.
-    Persists rotation across runs.
-
-    Job 1 (9:00 AM):  Email 1 → Gmail #1, Email 2 → Gmail #2, Email 3 → Gmail #3
-    Job 2 (9:08 AM):  Email 1 → Gmail #4, Email 2 → Gmail #1, Email 3 → Gmail #2
-    Job 3 (9:16 AM):  Email 1 → Gmail #3, Email 2 → Gmail #4, Email 3 → Gmail #1
+    Optionally attach a resume PDF to each draft.
     """
     results = []
     usage = _load_usage()
@@ -234,7 +295,8 @@ def create_batch_drafts(emails: list[dict]) -> list[dict]:
             to_email=email["to"],
             subject=email["subject"],
             body=email["body"],
-            account_index=account_index
+            account_index=account_index,
+            attachment_path=attachment_path,
         )
         results.append(result)
 
