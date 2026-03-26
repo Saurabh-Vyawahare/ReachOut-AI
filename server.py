@@ -416,6 +416,40 @@ class RemoveContactRequest(BaseModel):
 class ChatRequest(BaseModel):
     message: str
 
+class WebhookRequest(BaseModel):
+    cold_email_row: int
+    universe_row: int = 0
+    company: str = ""
+    secret: str = ""
+
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "reachout-webhook-2026")
+
+
+# ═══════════════════════════════════════════════════════════════
+# WEBHOOK (called by Apps Script — no auth required, uses secret)
+# ═══════════════════════════════════════════════════════════════
+
+@app.post("/api/webhook/new-job")
+def webhook_new_job(req: WebhookRequest, background_tasks: BackgroundTasks):
+    """
+    Called by Google Apps Script when a JD URL is pasted.
+    Busts cache and triggers scouts in background.
+    No Supabase auth — uses shared secret instead.
+    """
+    if req.secret != WEBHOOK_SECRET:
+        raise HTTPException(403, "Invalid webhook secret")
+
+    logger.info(f"Webhook: new job row {req.cold_email_row} ({req.company})")
+    bust_cache()
+
+    # Trigger scouts in background
+    background_tasks.add_task(run_scouts_for_row, req.cold_email_row)
+
+    return {
+        "status": "ok",
+        "message": f"Cache busted, scouts dispatched for row {req.cold_email_row}",
+    }
+
 
 # ═══════════════════════════════════════════════════════════════
 # EXISTING ENDPOINTS
