@@ -86,7 +86,18 @@ railway_domain = os.getenv("RAILWAY_PUBLIC_DOMAIN", "")
 if railway_domain:
     ALLOWED_ORIGINS.append(f"https://{railway_domain}")
 
-app.add_middleware(CORSMiddleware, allow_origins=ALLOWED_ORIGINS, allow_methods=["*"], allow_headers=["*"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://reach-out-ai-nine.vercel.app",
+        "https://reach-out-ai-git-main-vyawahares-northeasterns-projects.vercel.app",
+        "http://localhost:5173",
+        "http://localhost:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 @app.get("/api/health")
