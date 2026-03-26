@@ -3,7 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import {
   ChevronDown, ChevronUp, Upload, Send, Pencil, Trash2,
   Plus, Loader2, Check, AlertCircle, RefreshCw, User,
-  FileText, X, Zap, Search, Mail, Shield, Inbox, Eye
+  FileText, X, Zap, Search, Mail, Shield, Inbox, Eye,
+  Linkedin, ClipboardPaste
 } from 'lucide-react'
 import { api } from '../data/api'
 
@@ -188,6 +189,16 @@ function ContactCard({ contact, index, onUpdate, onRemove, editable }) {
           ) : (
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-semibold text-gray-800 truncate">{name || 'Unknown'}</span>
+              <a
+                href={`https://www.linkedin.com/search/results/all/?keywords=${encodeURIComponent(name)}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                onClick={(e) => e.stopPropagation()}
+                className="p-0.5 hover:bg-blue-50 rounded transition-colors"
+                title={`Search ${name} on LinkedIn`}
+              >
+                <Linkedin size={12} className="text-[#0077B5]" />
+              </a>
               {editable && (
                 <button
                   onClick={() => setEditing(true)}
@@ -324,12 +335,16 @@ function JobCard({ job, onRefresh }) {
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(null)
   const [scouting, setScouting] = useState(false)
+  const [showApolloInput, setShowApolloInput] = useState(false)
+  const [apolloText, setApolloText] = useState('')
+  const [analyzingApollo, setAnalyzingApollo] = useState(false)
 
   const stageIndex = getStageIndex(job.status)
   const isEditable = !['SENT', 'FU1', 'FU2', 'REPLIED', 'DONE'].includes(job.status?.toUpperCase())
   const hasEmails = contacts.some((c) => c.email)
   const allEmailsFilled = contacts.length > 0 && contacts.every((c) => c.email)
   const canGo = contacts.length > 0 && hasEmails && isEditable && !generating
+  const needsMoreContacts = contacts.length < 3 && contacts.length > 0 && isEditable
 
   useEffect(() => {
     setContacts(job.contacts || [])
@@ -376,6 +391,23 @@ function JobCard({ job, onRefresh }) {
       setError(err.message)
     } finally {
       setScouting(false)
+    }
+  }
+
+  const handleAnalyzeApollo = async () => {
+    if (!apolloText.trim()) return
+    setAnalyzingApollo(true)
+    setError(null)
+    try {
+      const result = await api.analyzeApollo(job.row, apolloText.trim())
+      setSuccess(result.message || 'Contacts added from Apollo list!')
+      setApolloText('')
+      setShowApolloInput(false)
+      setTimeout(() => { setSuccess(null); onRefresh() }, 3000)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setAnalyzingApollo(false)
     }
   }
 
@@ -534,6 +566,40 @@ function JobCard({ job, onRefresh }) {
                             <><Search size={16} /> Find Contacts</>
                           )}
                         </button>
+                      )}
+
+                      {/* Apollo paste area - when Grok found < 3 contacts */}
+                      {needsMoreContacts && (
+                        <div className="space-y-2">
+                          <button
+                            onClick={() => setShowApolloInput(!showApolloInput)}
+                            className="w-full flex items-center justify-center gap-2 px-4 py-2 border border-dashed border-[#4A6FA5]/30 text-[#4A6FA5] rounded-xl text-sm hover:bg-[#4A6FA5]/5 transition-all"
+                          >
+                            <ClipboardPaste size={14} />
+                            {showApolloInput ? 'Hide' : `Paste Apollo contacts (need ${3 - contacts.length} more)`}
+                          </button>
+                          {showApolloInput && (
+                            <div className="space-y-2">
+                              <textarea
+                                value={apolloText}
+                                onChange={(e) => setApolloText(e.target.value)}
+                                placeholder="Paste the Apollo.io contact list here — Claude will pick the best matches for this role..."
+                                className="w-full h-32 px-3 py-2 border border-gray-200 rounded-xl text-xs focus:outline-none focus:border-[#4A6FA5] focus:ring-2 focus:ring-[#4A6FA5]/10 resize-none"
+                              />
+                              <button
+                                onClick={handleAnalyzeApollo}
+                                disabled={!apolloText.trim() || analyzingApollo}
+                                className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-[#4A6FA5] text-white rounded-xl text-sm hover:bg-[#3d5f8f] disabled:opacity-50 transition-all"
+                              >
+                                {analyzingApollo ? (
+                                  <><Loader2 size={14} className="animate-spin" /> Analyzing...</>
+                                ) : (
+                                  <><Search size={14} /> Find Best Contacts</>
+                                )}
+                              </button>
+                            </div>
+                          )}
+                        </div>
                       )}
 
                       {/* GO button */}

@@ -166,12 +166,10 @@ def extract_job_info(jd_url):
 
 # ─── Helper: Run scouts for a single row ─────────────────────
 def run_scouts_for_row(cold_email_row):
-    """Run dual scouts for a specific Cold Email row. Called in background."""
+    """Run Grok scout for a specific Cold Email row. Called in background."""
     try:
         from jd_analyzer import analyze_jd
         from scout_grok import scout_grok
-        from scout_serpapi import scout_serpapi
-        from validator import validate_standoff
         from contact import Contact
 
         # Read the row
@@ -199,91 +197,127 @@ def run_scouts_for_row(cold_email_row):
         # Analyze JD
         company = target.get("company", "")
         location = target.get("location", "Remote")
+        job_title = target.get("job_title", "")
         jd_analysis = analyze_jd(jd_url)
 
-        # Run scouts in parallel
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            grok_future = pool.submit(scout_grok, company, jd_analysis, location)
-            serp_future = pool.submit(scout_serpapi, company, jd_analysis, location)
+        # Run Grok scout
+        grok_contacts = []
+        try:
+            grok_result = scout_grok(company, jd_analysis, location)
+            if isinstance(grok_result, dict):
+                grok_contacts = grok_result.get("contacts", [])
+            elif isinstance(grok_result, list):
+                grok_contacts = grok_result
+        except Exception as e:
+            logger.error(f"Grok scout failed: {e}")
 
-            grok_contacts = []
-            serp_contacts = []
-            grok_result = {}
-            serp_result = {}
-            try:
-                grok_result = grok_future.result(timeout=60)
-                # Scouts return dict {"contacts": [...], ...} or a list
-                if isinstance(grok_result, dict):
-                    grok_contacts = grok_result.get("contacts", [])
-                elif isinstance(grok_result, list):
-                    grok_contacts = grok_result
-            except Exception as e:
-                logger.error(f"Grok scout failed: {e}")
-            try:
-                serp_result = serp_future.result(timeout=60)
-                if isinstance(serp_result, dict):
-                    serp_contacts = serp_result.get("contacts", [])
-                elif isinstance(serp_result, list):
-                    serp_contacts = serp_result
-            except Exception as e:
-                logger.error(f"SerpAPI scout failed: {e}")
-
-        # Ensure contacts are Contact objects
-        def ensure_contacts(raw_list):
-            result = []
-            for item in (raw_list or []):
-                if isinstance(item, Contact):
-                    result.append(item)
-                elif isinstance(item, str):
-                    result.append(Contact(name=item, title="", company=company))
-                elif isinstance(item, dict):
-                    result.append(Contact(
-                        name=item.get("name", "Unknown"),
-                        title=item.get("title", ""),
-                        company=item.get("company", company),
-                    ))
-            return result
-
-        grok_contacts = ensure_contacts(grok_contacts)
-        serp_contacts = ensure_contacts(serp_contacts)
-
-        # Pass full scout results to validator (includes name_drop, company_size)
-        grok_full = grok_result if isinstance(grok_result, dict) else {"contacts": grok_contacts}
-        serp_full = serp_result if isinstance(serp_result, dict) else {"contacts": serp_contacts}
-        grok_full["contacts"] = grok_contacts
-        serp_full["contacts"] = serp_contacts
-
-        # Run standoff
-        job_title = target.get("job_title", "")
-        result = validate_standoff(
-            grok_full,
-            serp_full,
-            company,
-            job_title=job_title,
-        )
-        winner = result["winner"]
-        contacts = result["contacts"]
-        reason = result["reason"]
+        # Convert to Contact objects
+        contacts = []
+        for item in (grok_contacts or []):
+            if isinstance(item, Contact):
+                contacts.append(item)
+            elif isinstance(item, str):
+                contacts.append(Contact(name=item, title="", company=company))
+            elif isinstance(item, dict):
+                contacts.append(Contact(
+                    name=item.get("name", "Unknown"),
+                    title=item.get("title", ""),
+                    company=item.get("company", company),
+                ))
 
         # Fill contacts into sheet
         if contacts:
-            fill_contacts(sheets, cold_email_row, contacts, "", f"Scout: {winner}")
-            # Log standoff
-            try:
-                log_standoff_to_sheet(sheets, company, winner, reason)
-            except:
-                pass
+            fill_contacts(sheets, cold_email_row, contacts[:3], "", "Scout: grok")
 
         # Update status
-        update_cold_email_row(sheets, cold_email_row, {"B": "CONTACTS", "Q": winner})
+        status = "CONTACTS" if contacts else "FIND"
+        notes = f"Grok found {len(contacts)} contacts"
+        if len(contacts) < 3:
+            notes += " — paste Apollo list for more"
+        update_cold_email_row(sheets, cold_email_row, {"B": status, "Q": "grok", "P": notes})
         bust_cache()
-        logger.info(f"Scouts complete for row {cold_email_row}: {winner} won, {len(contacts)} contacts")
+        logger.info(f"Scouts complete for row {cold_email_row}: grok won, {len(contacts)} contacts")
 
     except Exception as e:
         logger.error(f"Scout pipeline failed for row {cold_email_row}: {e}")
         update_cold_email_row(sheets, cold_email_row, {"B": "FIND", "P": f"Scout error: {str(e)[:100]}"})
         bust_cache()
+
+
+# ─── Helper: Claude analyzes pasted Apollo contacts ──────────
+def analyze_apollo_contacts(cold_email_row, pasted_text):
+    """Use Claude Haiku to pick best contacts from pasted Apollo list."""
+    try:
+        from anthropic import Anthropic
+        from config import SCOUT_HAIKU_MODEL
+        from contact import Contact
+
+        rows = read_cold_email_rows(sheets)
+        target = next((r for r in rows if r["sheet_row"] == cold_email_row), None)
+        if not target:
+            raise Exception(f"Row {cold_email_row} not found")
+
+        company = target.get("company", "")
+        job_title = target.get("job_title", "")
+
+        # Get existing contacts from Grok
+        existing = []
+        for i in range(1, 4):
+            name = target.get(f"contact_{i}", "")
+            if name:
+                existing.append(name)
+
+        slots_needed = 3 - len(existing)
+        if slots_needed <= 0:
+            return {"message": "Already have 3 contacts", "contacts": []}
+
+        client = Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model=SCOUT_HAIKU_MODEL,
+            max_tokens=400,
+            temperature=0,
+            system=f"""You are a contact selector for cold email outreach. 
+Pick the {slots_needed} best people to contact for a {job_title} role at {company}.
+Prioritize: hiring managers > team leads > recruiters > VPs.
+Avoid: interns, associates, unrelated departments.
+Already have: {', '.join(existing) if existing else 'none'}
+Return ONLY valid JSON array: [{{"name": "Full Name", "title": "Job Title", "linkedin_url": "search URL"}}]""",
+            messages=[{"role": "user", "content": f"Pick {slots_needed} best contacts from this list:\n\n{pasted_text[:4000]}"}],
+        )
+
+        text = response.content[0].text.strip()
+        if "```" in text:
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+
+        start = text.find("[")
+        end = text.rfind("]") + 1
+        if start < 0 or end <= start:
+            raise Exception("Could not parse Claude response")
+
+        picks = json.loads(text[start:end])
+
+        # Add to sheet in empty slots
+        contact_cols = ["G", "H", "I"]
+        added = []
+        slot = len(existing)
+        for pick in picks[:slots_needed]:
+            if slot >= 3:
+                break
+            name = pick.get("name", "")
+            if name:
+                update_cold_email_row(sheets, cold_email_row, {contact_cols[slot]: name})
+                added.append(pick)
+                slot += 1
+
+        bust_cache()
+        return {"message": f"Added {len(added)} contacts from Apollo list", "contacts": added}
+
+    except Exception as e:
+        logger.error(f"Apollo contact analysis failed: {e}")
+        raise
 
 
 # ─── Helper: Generate drafts for a row ───────────────────────
@@ -461,6 +495,10 @@ class RemoveContactRequest(BaseModel):
 
 class ChatRequest(BaseModel):
     message: str
+
+class ApolloContactsRequest(BaseModel):
+    row: int
+    pasted_text: str
 
 class WebhookRequest(BaseModel):
     cold_email_row: int
@@ -740,6 +778,16 @@ def run_scouts_endpoint(cold_email_row: int, background_tasks: BackgroundTasks, 
     bust_cache()
     background_tasks.add_task(run_scouts_for_row, cold_email_row)
     return {"status": "running", "message": "Scouts dispatched"}
+
+
+@app.post("/api/analyze-apollo")
+def analyze_apollo(req: ApolloContactsRequest, user=Depends(get_current_user)):
+    """Analyze pasted Apollo contact list and pick best contacts using Claude."""
+    try:
+        result = analyze_apollo_contacts(req.row, req.pasted_text)
+        return result
+    except Exception as e:
+        raise HTTPException(500, str(e))
 
 
 @app.post("/api/update-contact")

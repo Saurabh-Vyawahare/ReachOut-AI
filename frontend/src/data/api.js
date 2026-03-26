@@ -39,6 +39,13 @@ export const api = {
   runScouts: (coldEmailRow) =>
     fetchJSON(`/run-scouts/${coldEmailRow}`, { method: 'POST' }),
 
+  // ─── Analyze pasted Apollo contacts ───
+  analyzeApollo: (row, pastedText) =>
+    fetchJSON('/analyze-apollo', {
+      method: 'POST',
+      body: JSON.stringify({ row, pasted_text: pastedText }),
+    }),
+
   // ─── Update contact name/email ───
   updateContact: (row, contactIndex, name, email) =>
     fetchJSON('/update-contact', {
