@@ -2,6 +2,7 @@
 Google Sheets Handler Module
 Reads from Universe tab, reads/writes Cold Email tab.
 Uses Google Sheets API v4.
+Supports both file-based and env var credentials (for cloud deployment).
 """
 import os
 import json
@@ -27,16 +28,13 @@ def get_sheets_service(credentials_file: str = None):
         if credentials_file is None:
             credentials_file = SHEETS_SERVICE_ACCOUNT
         creds = Credentials.from_service_account_file(credentials_file, scopes=SCOPES)
-    
+
     service = build("sheets", "v4", credentials=creds)
     return service.spreadsheets()
 
 
 def read_universe_row(sheets, row_number: int) -> dict:
-    """
-    Read a row from the Universe tab.
-    Returns: {company, job_title, date, location, jd_input}
-    """
+    """Read a row from the Universe tab."""
     range_str = f"'{UNIVERSE_TAB}'!A{row_number}:G{row_number}"
     try:
         result = sheets.values().get(
@@ -44,11 +42,8 @@ def read_universe_row(sheets, row_number: int) -> dict:
             range=range_str
         ).execute()
         values = result.get("values", [[]])[0]
-
-        # Pad to 7 columns if needed
         while len(values) < 7:
             values.append("")
-
         return {
             "company": values[0].strip() if values[0] else "",
             "job_title": values[1].strip() if values[1] else "",
@@ -65,10 +60,13 @@ def read_universe_row(sheets, row_number: int) -> dict:
 
 def read_cold_email_rows(sheets, status_filter: str = None) -> list[dict]:
     """
-    Read all rows from Cold Email tab.
-    If status_filter is provided, only return rows matching that status.
+    Read all rows from Cold Email tab (columns A-T, 20 columns).
+    A: Row #, B: Status, C: Company, D: Job Title, E: Location, F: Sector,
+    G-I: Contact 1-3, J-L: Email 1-3, M: Reply From, N: Gmail Used,
+    O: Sent Date, P: Notes, Q: Scout Winner, R: Quality Score,
+    S: FU1 Date, T: FU2 Date
     """
-    range_str = f"'{COLD_EMAIL_TAB}'!A2:P500"
+    range_str = f"'{COLD_EMAIL_TAB}'!A2:T500"
     try:
         result = sheets.values().get(
             spreadsheetId=SPREADSHEET_ID,
@@ -78,8 +76,8 @@ def read_cold_email_rows(sheets, status_filter: str = None) -> list[dict]:
 
         parsed = []
         for i, row in enumerate(rows, start=2):
-            # Pad to 16 columns
-            while len(row) < 16:
+            # Pad to 20 columns
+            while len(row) < 20:
                 row.append("")
 
             row_data = {
@@ -100,6 +98,10 @@ def read_cold_email_rows(sheets, status_filter: str = None) -> list[dict]:
                 "gmail_used": row[13].strip() if row[13] else "",
                 "sent_date": row[14].strip() if row[14] else "",
                 "notes": row[15].strip() if row[15] else "",
+                "scout_winner": row[16].strip() if row[16] else "",
+                "quality_score": row[17].strip() if row[17] else "",
+                "fu1_date": row[18].strip() if row[18] else "",
+                "fu2_date": row[19].strip() if row[19] else "",
             }
 
             if status_filter and row_data["status"] != status_filter.upper():
@@ -115,21 +117,8 @@ def read_cold_email_rows(sheets, status_filter: str = None) -> list[dict]:
 
 
 def update_cold_email_row(sheets, row_number: int, updates: dict):
-    """
-    Update specific columns in a Cold Email row.
-    updates: dict mapping column letter to value, e.g. {"G": "John - Director"}
-    """
-    column_map = {
-        "A": 0, "B": 1, "C": 2, "D": 3, "E": 4, "F": 5,
-        "G": 6, "H": 7, "I": 8, "J": 9, "K": 10, "L": 11,
-        "M": 12, "N": 13, "O": 14, "P": 15
-    }
-
+    """Update specific columns in a Cold Email row."""
     for col_letter, value in updates.items():
-        col_index = column_map.get(col_letter.upper())
-        if col_index is None:
-            continue
-
         cell_range = f"'{COLD_EMAIL_TAB}'!{col_letter.upper()}{row_number}"
         try:
             sheets.values().update(
@@ -143,10 +132,7 @@ def update_cold_email_row(sheets, row_number: int, updates: dict):
 
 
 def write_cold_email_row(sheets, row_number: int, data: dict):
-    """
-    Write a complete Cold Email row.
-    data should have keys matching column names from config.
-    """
+    """Write a complete Cold Email row."""
     row_values = [
         data.get("universe_row", ""),
         data.get("status", ""),
@@ -164,9 +150,13 @@ def write_cold_email_row(sheets, row_number: int, data: dict):
         data.get("gmail_used", ""),
         data.get("sent_date", ""),
         data.get("notes", ""),
+        data.get("scout_winner", ""),
+        data.get("quality_score", ""),
+        data.get("fu1_date", ""),
+        data.get("fu2_date", ""),
     ]
 
-    range_str = f"'{COLD_EMAIL_TAB}'!A{row_number}:P{row_number}"
+    range_str = f"'{COLD_EMAIL_TAB}'!A{row_number}:T{row_number}"
     try:
         sheets.values().update(
             spreadsheetId=SPREADSHEET_ID,
@@ -181,16 +171,11 @@ def write_cold_email_row(sheets, row_number: int, data: dict):
 
 def fill_contacts(sheets, row_number: int, contacts: list,
                   sector: str, notes: str):
-    """
-    Fill contacts and metadata into Cold Email row.
-    Called after contact finder runs.
-    """
+    """Fill contacts and metadata into Cold Email row."""
     updates = {
-        "F": sector.capitalize(),
+        "F": sector.capitalize() if sector else "",
         "P": notes,
     }
-
-    # Fill up to 3 contacts
     contact_cols = ["G", "H", "I"]
     for i, contact in enumerate(contacts[:3]):
         updates[contact_cols[i]] = contact.display_string()
@@ -200,9 +185,7 @@ def fill_contacts(sheets, row_number: int, contacts: list,
 
 
 def fill_job_info(sheets, row_number: int, universe_data: dict):
-    """
-    Auto-fill company, title, location from Universe row.
-    """
+    """Auto-fill company, title, location from Universe row."""
     updates = {
         "C": universe_data.get("company", ""),
         "D": universe_data.get("job_title", ""),
@@ -212,10 +195,7 @@ def fill_job_info(sheets, row_number: int, universe_data: dict):
 
 
 def check_duplicate(sheets, email: str) -> bool:
-    """
-    Check if an email address has been used before
-    across all Cold Email rows.
-    """
+    """Check if an email address has been used before."""
     rows = read_cold_email_rows(sheets)
     for row in rows:
         for field in [row["email_1"], row["email_2"], row["email_3"]]:
@@ -236,7 +216,7 @@ def get_next_empty_row(sheets) -> int:
         return len(values) + 1
     except Exception as e:
         logger.error(f"Failed to get next empty row: {e}")
-        return 2  # Default to row 2 (after header)
+        return 2
 
 
 # ─── v2 Extensions ──────────────────────────────────────────
@@ -259,13 +239,12 @@ def update_follow_up_dates(sheets, row_number: int, fu1_date: str, fu2_date: str
 
 def log_standoff_to_sheet(sheets, company: str, winner: str, reason: str):
     """Log standoff result to the Standoff Tracker tab."""
-    from config import SPREADSHEET_ID, STANDOFF_TAB
+    from config import STANDOFF_TAB
     from datetime import datetime
     try:
         range_str = f"'{STANDOFF_TAB}'!A:D"
         result = sheets.values().get(spreadsheetId=SPREADSHEET_ID, range=range_str).execute()
         next_row = len(result.get("values", [])) + 1
-
         sheets.values().update(
             spreadsheetId=SPREADSHEET_ID,
             range=f"'{STANDOFF_TAB}'!A{next_row}:D{next_row}",
@@ -273,5 +252,4 @@ def log_standoff_to_sheet(sheets, company: str, winner: str, reason: str):
             body={"values": [[datetime.now().isoformat(), company, winner, reason]]}
         ).execute()
     except Exception as e:
-        import logging
-        logging.getLogger(__name__).error(f"Standoff log to sheet failed: {e}")
+        logger.error(f"Standoff log to sheet failed: {e}")

@@ -1,97 +1,161 @@
 import { useState } from 'react'
-import { motion } from 'framer-motion'
-import { X, Link, Zap } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import { X, Link, Loader2, Check, AlertCircle, MapPin, Briefcase, Building2 } from 'lucide-react'
+import { api } from '../data/api'
 
-export default function AddJobModal({ onClose }) {
+export default function AddJobModal({ open, onClose, onJobAdded }) {
   const [url, setUrl] = useState('')
-  const [submitted, setSubmitted] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState(null)
+  const [error, setError] = useState(null)
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!url.trim()) return
-    setSubmitted(true)
-    setTimeout(() => onClose(), 1500)
+    setLoading(true)
+    setError(null)
+    setResult(null)
+
+    try {
+      const data = await api.addJob(url.trim())
+      setResult(data)
+      setUrl('')
+      // Notify parent to refresh after short delay
+      setTimeout(() => {
+        onJobAdded?.()
+        onClose()
+        setResult(null)
+      }, 2500)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setLoading(false)
+    }
   }
 
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !loading) handleSubmit()
+    if (e.key === 'Escape') onClose()
+  }
+
+  if (!open) return null
+
   return (
-    <div
-      className="fixed inset-0 z-[100] flex items-center justify-center"
-      style={{ background: 'rgba(15, 29, 48, 0.5)', backdropFilter: 'blur(4px)' }}
-      onClick={onClose}
-    >
+    <AnimatePresence>
       <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 12 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        exit={{ opacity: 0, scale: 0.95 }}
-        onClick={e => e.stopPropagation()}
-        className="w-[480px] bg-white rounded-2xl border border-border-light overflow-hidden"
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4"
+        onClick={(e) => e.target === e.currentTarget && onClose()}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
-          <h2 className="text-[15px] font-medium text-gray-700">Add job to pipeline</h2>
-          <button onClick={onClose} className="text-gray-300 hover:text-gray-500 transition-colors cursor-pointer">
-            <X size={18} />
-          </button>
-        </div>
-
-        <div className="p-5">
-          {!submitted ? (
-            <>
-              <label className="block text-[12px] text-gray-400 font-medium mb-2">Job description URL</label>
-              <div className="flex items-center gap-2 mb-3">
-                <div className="relative flex-1">
-                  <Link size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" />
-                  <input
-                    type="url"
-                    value={url}
-                    onChange={e => setUrl(e.target.value)}
-                    onKeyDown={e => e.key === 'Enter' && handleSubmit()}
-                    placeholder="https://boards.greenhouse.io/company/jobs/..."
-                    className="w-full pl-9 pr-4 py-2.5 rounded-xl border border-border-light text-[13px] text-gray-700 placeholder-gray-300 focus:outline-none focus:border-stone-blue-200 focus:ring-2 focus:ring-stone-blue-50"
-                    autoFocus
-                  />
-                </div>
-              </div>
-              <p className="text-[11px] text-gray-300 mb-5">
-                Supported: Greenhouse, Ashby, Lever, Workday, and most career pages
+        <motion.div
+          initial={{ opacity: 0, scale: 0.95, y: 10 }}
+          animate={{ opacity: 1, scale: 1, y: 0 }}
+          exit={{ opacity: 0, scale: 0.95, y: 10 }}
+          className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden"
+        >
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100">
+            <div>
+              <h2 className="text-lg font-semibold text-gray-800">Add Job</h2>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Paste a JD link — we'll extract info & find contacts
               </p>
-
-              <div className="flex items-center gap-3 p-3 rounded-xl bg-stone-blue-50/50 border border-stone-blue-100/50 mb-5">
-                <Zap size={14} className="text-stone-blue shrink-0" />
-                <p className="text-[12px] text-stone-blue-700 leading-relaxed">
-                  Paste the URL and the pipeline handles everything: JD extraction, dual-scout contact search, email generation, and Gmail drafts.
-                </p>
-              </div>
-
-              <div className="flex gap-3 justify-end">
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2 rounded-lg text-[13px] text-gray-500 hover:bg-gray-50 transition-colors cursor-pointer"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleSubmit}
-                  disabled={!url.trim()}
-                  className="px-5 py-2 rounded-lg bg-stone-blue text-white text-[13px] font-medium hover:bg-stone-blue-dark transition-colors disabled:opacity-30 cursor-pointer disabled:cursor-not-allowed"
-                >
-                  Start pipeline
-                </button>
-              </div>
-            </>
-          ) : (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="text-center py-6"
+            </div>
+            <button
+              onClick={onClose}
+              className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors"
             >
-              <div className="w-12 h-12 rounded-full bg-green-50 flex items-center justify-center mx-auto mb-3">
-                <Zap size={20} className="text-green-600" />
-              </div>
-              <p className="text-[14px] font-medium text-gray-700">Pipeline started!</p>
-              <p className="text-[12px] text-gray-400 mt-1">JD analysis and dual-scout search running...</p>
-            </motion.div>
-          )}
-        </div>
+              <X size={18} className="text-gray-400" />
+            </button>
+          </div>
+
+          {/* Body */}
+          <div className="px-6 py-5">
+            {/* URL input */}
+            <div className="relative">
+              <Link size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                value={url}
+                onChange={(e) => setUrl(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="https://jobs.lever.co/company/position..."
+                className="w-full pl-10 pr-4 py-3 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-[#4A6FA5] focus:ring-2 focus:ring-[#4A6FA5]/10 transition-all"
+                autoFocus
+                disabled={loading}
+              />
+            </div>
+
+            {/* Supported platforms hint */}
+            <p className="text-[10px] text-gray-400 mt-2 ml-1">
+              Supports Greenhouse, Lever, Ashby, Workday, LinkedIn, and direct company pages
+            </p>
+
+            {/* Error */}
+            {error && (
+              <motion.div
+                initial={{ opacity: 0, y: -4 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="flex items-center gap-2 mt-3 px-3 py-2 bg-red-50 border border-red-100 rounded-lg text-xs text-red-600"
+              >
+                <AlertCircle size={14} />
+                {error}
+              </motion.div>
+            )}
+
+            {/* Success result */}
+            {result && (
+              <motion.div
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="mt-4 p-4 bg-green-50 border border-green-100 rounded-xl"
+              >
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-6 h-6 rounded-full bg-green-500 text-white flex items-center justify-center">
+                    <Check size={14} />
+                  </div>
+                  <span className="text-sm font-semibold text-green-700">Job added!</span>
+                </div>
+                <div className="space-y-1.5 text-xs">
+                  <div className="flex items-center gap-2 text-green-700">
+                    <Building2 size={12} /> <span className="font-medium">{result.company}</span>
+                  </div>
+                  <div className="flex items-center gap-2 text-green-600">
+                    <Briefcase size={12} /> {result.job_title}
+                  </div>
+                  <div className="flex items-center gap-2 text-green-600">
+                    <MapPin size={12} /> {result.location || 'Remote'}
+                  </div>
+                </div>
+                <p className="text-[10px] text-green-500 mt-2">
+                  Scouts dispatched — contacts will appear in Pipeline shortly
+                </p>
+              </motion.div>
+            )}
+          </div>
+
+          {/* Footer */}
+          <div className="flex items-center justify-end gap-2 px-6 py-4 bg-gray-50/80 border-t border-gray-100">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSubmit}
+              disabled={!url.trim() || loading}
+              className="flex items-center gap-2 px-5 py-2 bg-[#4A6FA5] text-white text-sm font-medium rounded-lg hover:bg-[#3d5f8f] disabled:opacity-50 disabled:cursor-not-allowed transition-all"
+            >
+              {loading ? (
+                <><Loader2 size={14} className="animate-spin" /> Analyzing...</>
+              ) : (
+                'Add & Find Contacts'
+              )}
+            </button>
+          </div>
+        </motion.div>
       </motion.div>
-    </div>
+    </AnimatePresence>
   )
 }

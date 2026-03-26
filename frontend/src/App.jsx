@@ -45,6 +45,12 @@ export default function App() {
     setView('dashboard')
   }
 
+  const handleJobAdded = () => {
+    setShowAddJob(false)
+    // Switch to pipeline view to see the new job
+    setView('pipeline')
+  }
+
   if (checkingSession) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-surface">
@@ -86,9 +92,11 @@ export default function App() {
           {view === 'chat' && <Chat key="chat" />}
         </AnimatePresence>
       </main>
-      <AnimatePresence>
-        {showAddJob && <AddJobModal onClose={() => setShowAddJob(false)} />}
-      </AnimatePresence>
+      <AddJobModal
+        open={showAddJob}
+        onClose={() => setShowAddJob(false)}
+        onJobAdded={handleJobAdded}
+      />
     </div>
   )
 }
