@@ -4,7 +4,7 @@ import {
   ChevronDown, ChevronUp, Upload, Send, Pencil, Trash2,
   Plus, Loader2, Check, AlertCircle, RefreshCw, User,
   FileText, X, Zap, Search, Mail, Shield, Inbox, Eye,
-  Linkedin, ClipboardPaste
+  Linkedin, ClipboardPaste, Copy
 } from 'lucide-react'
 import { api } from '../data/api'
 
@@ -189,6 +189,13 @@ function ContactCard({ contact, index, onUpdate, onRemove, editable }) {
           ) : (
             <div className="flex items-center gap-1.5">
               <span className="text-sm font-semibold text-gray-800 truncate">{name || 'Unknown'}</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(name) }}
+                className="p-0.5 hover:bg-gray-100 rounded transition-colors"
+                title="Copy name"
+              >
+                <Copy size={11} className="text-gray-400" />
+              </button>
               <a
                 href={`https://www.linkedin.com/search/results/all/?keywords=${encodeURIComponent(name)}`}
                 target="_blank"

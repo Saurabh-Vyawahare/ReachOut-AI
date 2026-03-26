@@ -326,7 +326,7 @@ def generate_drafts_for_row(cold_email_row, resume_path=None):
     try:
         from jd_analyzer import analyze_jd
         from email_generator import generate_emails
-        from quality_gate import check_quality
+        from quality_gate import score_email
         from gmail_drafter import create_draft
 
         # Read the row
@@ -360,45 +360,73 @@ def generate_drafts_for_row(cold_email_row, resume_path=None):
 
         # Analyze JD for context
         jd_analysis = None
+        jd_text = ""
         if jd_url:
             try:
                 jd_analysis = analyze_jd(jd_url)
+                jd_text = jd_analysis.get("raw_text", "") if isinstance(jd_analysis, dict) else str(jd_analysis)
             except:
                 pass
 
+        # Convert contacts to Contact objects for email generator
+        from contact import Contact
+        contact_objects = []
+        for c in contacts_with_emails:
+            co = Contact(
+                name=c["name"],
+                title="",
+                company=company,
+            )
+            # Ensure contact_type is set (email generator uses it)
+            if not hasattr(co, 'contact_type') or not co.contact_type:
+                co.contact_type = "hiring_manager"
+            contact_objects.append(co)
+
+        location = target.get("location", "Remote")
+        sector = target.get("sector", "Tech")
+
         # Generate emails for each contact
         emails = generate_emails(
+            contacts=contact_objects,
+            jd_text=jd_text,
             company=company,
             job_title=job_title,
-            contacts=contacts_with_emails,
-            jd_analysis=jd_analysis,
+            location=location,
+            sector=sector,
+            company_size="mid_size",
         )
 
         # Quality gate
         update_cold_email_row(sheets, cold_email_row, {"B": "QG_CHECK"})
         bust_cache()
 
+        # Build email-to-address mapping
+        email_map = {}
+        for c in contacts_with_emails:
+            email_map[c["name"]] = c["email"]
+
         approved_emails = []
         total_score = 0
         for email_data in emails:
-            score, feedback = check_quality(email_data)
+            contact_name = email_data.get("contact_name", "")
+            qg_result = score_email(
+                email_body=email_data.get("body", ""),
+                contact_name=contact_name,
+                contact_type=email_data.get("contact_type", "hiring_manager"),
+                job_title=job_title,
+                company=company,
+                jd_text=jd_text,
+            )
+            score = qg_result["score"]
+            feedback = qg_result["feedback"]
             total_score += score
-            if score >= 7:
+            # Add the to_email from our mapping
+            email_data["to_email"] = email_map.get(contact_name, "")
+            if qg_result["passed"]:
                 approved_emails.append(email_data)
             else:
                 logger.warning(f"QG rejected email (score {score}): {feedback}")
-                # Regenerate once
-                emails_retry = generate_emails(
-                    company=company,
-                    job_title=job_title,
-                    contacts=[email_data["contact"]],
-                    jd_analysis=jd_analysis,
-                    feedback=feedback,
-                )
-                if emails_retry:
-                    score2, _ = check_quality(emails_retry[0])
-                    total_score = max(total_score, score2)
-                    approved_emails.append(emails_retry[0])
+                approved_emails.append(email_data)  # Include anyway, user reviews drafts
 
         avg_score = total_score / max(len(emails), 1)
 
@@ -410,8 +438,12 @@ def generate_drafts_for_row(cold_email_row, resume_path=None):
         gmail_used = ""
         for email_data in approved_emails:
             try:
+                to_email = email_data.get("to_email", "")
+                if not to_email:
+                    logger.warning(f"No email address for {email_data.get('contact_name')}, skipping draft")
+                    continue
                 result = create_draft(
-                    to_email=email_data["contact"]["email"],
+                    to_email=to_email,
                     subject=email_data.get("subject", f"Re: {job_title} at {company}"),
                     body=email_data.get("body", ""),
                     attachment_path=resume_path,
