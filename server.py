@@ -218,6 +218,26 @@ def run_scouts_for_row(cold_email_row):
             except Exception as e:
                 logger.error(f"SerpAPI scout failed: {e}")
 
+        # Ensure contacts are Contact objects (scouts may return strings or dicts)
+        def ensure_contacts(raw_list):
+            result = []
+            for item in (raw_list or []):
+                if isinstance(item, Contact):
+                    result.append(item)
+                elif isinstance(item, str):
+                    result.append(Contact(name=item, title="", contact_type="unknown"))
+                elif isinstance(item, dict):
+                    result.append(Contact(
+                        name=item.get("name", ""),
+                        title=item.get("title", ""),
+                        contact_type=item.get("contact_type", "unknown"),
+                        linkedin_url=item.get("linkedin_url", ""),
+                    ))
+            return result
+
+        grok_contacts = ensure_contacts(grok_contacts)
+        serp_contacts = ensure_contacts(serp_contacts)
+
         # Run standoff
         job_title = target.get("job_title", "")
         result = validate_standoff(
