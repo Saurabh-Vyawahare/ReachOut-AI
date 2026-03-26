@@ -171,7 +171,7 @@ def run_scouts_for_row(cold_email_row):
         from jd_analyzer import analyze_jd
         from scout_grok import scout_grok
         from scout_serpapi import scout_serpapi
-        from validator import run_standoff
+        from validator import validate_standoff
         from contact import Contact
 
         # Read the row
@@ -218,7 +218,16 @@ def run_scouts_for_row(cold_email_row):
                 logger.error(f"SerpAPI scout failed: {e}")
 
         # Run standoff
-        winner, contacts, reason = run_standoff(grok_contacts, serp_contacts, company)
+        job_title = target.get("job_title", "")
+        result = validate_standoff(
+            {"contacts": grok_contacts},
+            {"contacts": serp_contacts},
+            company,
+            job_title=job_title,
+        )
+        winner = result["winner"]
+        contacts = result["contacts"]
+        reason = result["reason"]
 
         # Fill contacts into sheet
         if contacts:
